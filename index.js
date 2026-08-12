@@ -119,7 +119,7 @@ class DeskScriptEngine {
     return result;
   }
 
-  // .ds ファイル内に書かれた hire(...) / dism(...) / run(...) を、
+  // .ds ファイル内に書かれた hire(...) / dism(...) / run(...) / command.log.print(...) を、
   // 書かれた順番どおりに実行する（解雇より前のrunは成功、後のrunは失敗、という順序が正しく反映される）。
   // run結果のみを {deskName, argValue, workerName, result} の配列で返す。
   runAll() {
@@ -148,6 +148,11 @@ class DeskScriptEngine {
         const result = this.callDesk(deskName, argValue, workerName, workerPassword);
         if (result !== null) console.log(result);
         results.push({ deskName, argValue, workerName, result });
+      } else if (action.type === 'print') {
+        // command.log.print("文字", 変数名, 関数名(), "文字") はグローバル変数と関数だけを使える
+        // （desk/drawerの外側に書く構文のため、hostScope/disScopeは持たない）。
+        const text = this.evaluator.buildOutput(action.content, {}, {});
+        console.log(text);
       }
     }
     return results;
