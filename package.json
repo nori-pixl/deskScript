@@ -1,0 +1,17 @@
+{
+  "name": "deskscript-project",
+  "version": "1.0.0",
+  "description": "Office-metaphor programming language framework built on JavaScript.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [
+    "deskscript",
+    "language",
+    "framework"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {}
+}

@@ -1,0 +1,103 @@
+myprocess:main.ds
+
+// ==========================================
+// 1. グローバル設定（全行・全デスク共通の保管庫）
+// ==========================================
+set:var(string, global/all/envType) = "PRODUCTION"
+set:var(string, global/all/systemName) = "DeskScript-Core"
+
+
+// ==========================================
+// 2. 共通関数（引数は10個でもいくらでも並べられる）
+// ==========================================
+function:buildReport(string title, int code, string status){
+   "[", global.systemName, "] ", title, " (コード:", code, " / 状態:", status, ")"
+}
+
+
+// ==========================================
+// 3. メインロジック（デスクと引き出し）
+// ==========================================
+desk:ultimateDesk(string inputData){
+   drawer:allInOneDrawer(action99){
+      // 引数で渡されたデータを、この引き出し専用（hostスコープ）にコピー
+      host.var.string:targetToken(id, inputData)
+      
+      inreturn:resultReturn{
+         // --- ① 共通関数の呼び出し ---
+         buildReport("システム監査ログ", 404, "警告検知"), "\n\n"
+
+         // --- ② 四則演算の評価 ---
+         "[数式計算] 10 + 20 * 3 = ", 10 + 20 * 3, "\n"
+         "[余り計算] 10 % 3 = ", 10 % 3, "\n\n"
+
+         // --- ③ 外部ライブラリ（import.ds.txt）のドット関数呼び出し ---
+         // cryptoライブラリを使ってハッシュ値をダイレクト生成
+         "  -> 暗号化ハッシュ（SHA256）: ", crypto.createHash("sha256").update(targetToken).digest("hex"), "\n\n"
+
+         // --- ④ if / elif / else 構文（bool型スイッチ埋め込み） ---
+         "[条件分岐判定]\n"
+         if(global.envType == "PRODUCTION"):true {
+            "  -> [判定結果] 本番環境（PRODUCTION）が有効です。\n"
+         }
+         elif(global.envType == "DEVELOP"):true {
+            "  -> [判定結果] 開発環境が有効です。\n"
+         }
+         else {
+            "  -> [判定結果] 不明な環境です。\n"
+         }
+         "\n"
+
+         // --- ⑤ switch 構文 ---
+         "[switch割り振り]\n"
+         switch(targetToken):case("CriticalError"){
+            "  └─> 緊急警戒引き出しへ転送します。\n"
+         }
+         case("NormalLog"){
+            "  └─> 通常ストレージへ自動格納します。\n"
+         }
+         default{
+            "  └─> 汎用タスクとして処理します。\n"
+         }
+         "\n"
+
+         // --- ⑥ while 構文（擬似条件ループ） ---
+         "[whileテスト]\n"
+         while(1 < 2):true {
+            "  -> whileの条件が一致している間、処理を回します。\n"
+         }
+         "\n"
+
+         // --- ⑦ for 構文（dis.var使い捨て変数 ＆ end安全着地点） ---
+         "[forループ実行]\n"
+         // 1から始まって「++（1ずつ増加）」し、「3回」繰り返す
+         for(dis.var:step in ++1):3 {
+            "  -> [周回] 現在のステップ数: ", step, "\n"
+         }
+         end {
+            // ループを抜けた瞬間に、使い捨て変数「step」はメモリから完全に消滅（Discard）します
+            "  -> [安全確認] ループ終了。使い捨て変数はシュレッダーにかけられました。\n\n"
+         }
+
+         // --- ⑧ try - catch - end 構文（エラーハンドリング） ---
+         "[try-catch例外テスト]\n"
+         try {
+            "  -> 正常なタスクプロセスを実行中...\n"
+         }
+         catch(dis.var:errorMessage) {
+            "  [!] エラーを安全に捕獲しました。理由: ", errorMessage, "\n"
+         }
+         end {
+            "  -> [try完了] エラーの有無に関わらず、デスクの安全は保護されました。\n\n"
+         }
+
+         // --- ⑨ forever 構文（一番シンプルな永久監視） ---
+         forever(true){
+            "  [常時監視] バックグラウンドプロセスが安定稼働しています。\n"
+         }
+      }
+   }
+   outreturn{
+      resultReturn
+   }
+}
