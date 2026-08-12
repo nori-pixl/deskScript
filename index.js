@@ -14,22 +14,40 @@ class DeskScriptEngine {
     return this.parser.loadScriptFile(scriptPath);
   }
 
-  run(commandLine) {
-    const line = commandLine.trim();
-    if (!line || !line.startsWith("shell.log")) return;
-
-    const logContentMatch = line.match(/shell\.log\s*\((.*)\)/);
-    if (!logContentMatch) return;
-    const innerContent = logContentMatch[1].trim();
-
-    const loadDeskMatch = innerContent.match(/load\.desk:(\w+)\s*\((.*)\)/);
-    if (!loadDeskMatch) return;
-
-    const deskName = loadDeskMatch[1];
-    const argValue = loadDeskMatch[2].replace(/^["']|["']$/g, '');
-
+  // desk名と引数を渡して1つのdeskを実行し、outreturnの結果を「戻り値として」返す。
+  // console.logはしない（呼び出し側が使い道を選べるように）。
+  // workerName/workerPasswordは、そのdeskに担当worker（@worker）が指定されている場合のみ必要。
+  callDesk(deskName, argValue, workerName = null, workerPassword = null) {
     const desk = this.storage.desks[deskName];
-    if (!desk) return console.log(`[DeskScript Error]: desk "${deskName}" がありません。`);
+    if (!desk) {
+      console.log(`[DeskScript Error]: desk "${deskName}" がありません。`);
+      return null;
+    }
+
+    // このdeskに担当workerが指定されている場合は認証を行う
+    if (desk.worker) {
+      if (!workerName || !workerPassword) {
+        console.log(`[DeskScript Error]: desk "${deskName}" はworker認証が必要です。`);
+        return null;
+      }
+      if (workerName !== desk.worker.name || workerPassword !== desk.worker.password) {
+        console.log(`[DeskScript Error]: worker "${workerName}" にはdesk "${deskName}" を操作する権限がありません。`);
+        return null;
+      }
+      const worker = this.storage.workers[workerName];
+      if (!worker) {
+        console.log(`[DeskScript Error]: worker "${workerName}" は登録されていません（set:workerが必要です）。`);
+        return null;
+      }
+      if (worker.password !== workerPassword) {
+        console.log(`[DeskScript Error]: worker "${workerName}" のパスワードが違います。`);
+        return null;
+      }
+      if (!worker.hired) {
+        console.log(`[DeskScript Error]: worker "${workerName}" は解雇されているため、desk "${deskName}" を操作できません。`);
+        return null;
+      }
+    }
 
     const deskArgs = {};
     if (desk.argName) deskArgs[desk.argName] = argValue;
@@ -77,15 +95,70 @@ class DeskScriptEngine {
         }
       }
     }
-    console.log(outputText);
+    return outputText;
+  }
+
+  // shell.log(load.desk:デスク名("引数")) 形式のコマンド文字列を1つ実行する（従来互換）。
+  // 結果はconsole.logで出力しつつ、戻り値としても返す。
+  run(commandLine) {
+    const line = commandLine.trim();
+    if (!line || !line.startsWith("shell.log")) return null;
+
+    const logContentMatch = line.match(/shell\.log\s*\((.*)\)/);
+    if (!logContentMatch) return null;
+    const innerContent = logContentMatch[1].trim();
+
+    const loadDeskMatch = innerContent.match(/load\.desk:(\w+)\s*\((.*)\)/);
+    if (!loadDeskMatch) return null;
+
+    const deskName = loadDeskMatch[1];
+    const argValue = loadDeskMatch[2].replace(/^["']|["']$/g, '');
+
+    const result = this.callDesk(deskName, argValue);
+    if (result !== null) console.log(result);
+    return result;
+  }
+
+  // .ds ファイル内に書かれた hire(...) / dism(...) / run(...) を、
+  // 書かれた順番どおりに実行する（解雇より前のrunは成功、後のrunは失敗、という順序が正しく反映される）。
+  // run結果のみを {deskName, argValue, workerName, result} の配列で返す。
+  runAll() {
+    const results = [];
+    for (const action of this.storage.actions) {
+      if (action.type === 'hire') {
+        const worker = this.storage.workers[action.workerName];
+        if (!worker) {
+          console.log(`[DeskScript Error]: worker "${action.workerName}" は未登録です（set:workerが先に必要です）。`);
+          continue;
+        }
+        worker.hired = true;
+      } else if (action.type === 'dism') {
+        const worker = this.storage.workers[action.workerName];
+        if (!worker) {
+          console.log(`[DeskScript Error]: worker "${action.workerName}" は未登録です。`);
+          continue;
+        }
+        if (worker.password !== action.password) {
+          console.log(`[DeskScript Error]: worker "${action.workerName}" の解雇に失敗（パスワード不一致）。`);
+          continue;
+        }
+        worker.hired = false;
+      } else if (action.type === 'run') {
+        const { deskName, argValue, workerName, workerPassword } = action;
+        const result = this.callDesk(deskName, argValue, workerName, workerPassword);
+        if (result !== null) console.log(result);
+        results.push({ deskName, argValue, workerName, result });
+      }
+    }
+    return results;
   }
 }
 
 // --- 実際の実行トリガー ---
+// .ds ファイル側に書かれた run(desk名(引数)) を、書かれた数だけ順番に実行する。
 const engine = new DeskScriptEngine();
 if (engine.init('./import.ds.txt', './main.ds')) {
-  // 分割合流したゲーム用ロジックを動かす！
-  engine.run('shell.log(load.desk:ultimateDesk("勇者アレン"))');
+  engine.runAll();
 }
 
 module.exports = { DeskScriptEngine };
