@@ -6,6 +6,12 @@ class DeskScriptStorage {
     this.desks = {};
     this.functions = {};
     this.importedModules = { process };
+    // .ds ファイル内に書かれた hire(...) / dism(...) / run(...) を、
+    // 書かれた順番どおりに実行するためのアクション列。
+    // 例: [{type:'hire',...}, {type:'run',...}, {type:'dism',...}, {type:'run',...}]
+    this.actions = [];
+    // worker（deskを扱う働き者）の管理。名前 -> { password, hired }
+    this.workers = {};
   }
 
   // import.ds.txt からJSライブラリをロード
