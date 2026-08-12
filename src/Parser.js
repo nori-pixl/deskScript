@@ -28,6 +28,28 @@ class DeskScriptParser {
     return -1;
   }
 
+  // openIndex は開き丸括弧 "(" の位置。文字列リテラル("...")内の ( ) は無視しつつ、
+  // 対応する閉じ丸括弧のインデックスを深さカウントで求める。見つからなければ -1。
+  // command.log.print(...) のように、引数の中に関数呼び出し（入れ子の括弧）を含む構文の切り出しに使う。
+  findMatchingParen(text, openIndex) {
+    let depth = 0;
+    let inString = false;
+    for (let i = openIndex; i < text.length; i++) {
+      const ch = text[i];
+      if (ch === '"' && text[i - 1] !== '\\') {
+        inString = !inString;
+        continue;
+      }
+      if (inString) continue;
+      if (ch === '(') depth++;
+      else if (ch === ')') {
+        depth--;
+        if (depth === 0) return i;
+      }
+    }
+    return -1;
+  }
+
   // headerRegex は本体直前までにマッチし、最後のキャプチャグループの直後に "{" が続く前提。
   // ヘッダーのキャプチャ群と、括弧対応で切り出した本体(トリム前)を順に返す。
   extractBlocks(text, headerRegex) {
@@ -158,27 +180,48 @@ class DeskScriptParser {
       this.storage.workers[workerName] = { password, hired: false };
     }
 
-    // hire(...) / dism(...) / run(...) は「書かれた順番」が意味を持つので、
-    // 1本の正規表現でまとめて出現順にスキャンし、アクション列として記録する。
-    // 実際の雇用/解雇/実行は index.js 側で順番どおりに処理する。
+    // hire(...) / dism(...) / run(...) / command.log.print(...) は「書かれた順番」が意味を持つので、
+    // それぞれ出現位置(start)つきで抽出したあと、位置順にマージしてアクション列として記録する。
+    // 実際の雇用/解雇/実行/出力は index.js 側で順番どおりに処理する。
     const actionRegex =
       /\bhire\s*\(\s*"([^"]*)"\s*\)|\bdism\s*\(\s*"([^"]*)"\s*,\s*"([^"]*)"\s*\)|\brun\s*\(\s*(?:(\w+)\s*\(([^()]*)\)|"([^"]*)"\s*,\s*"([^"]*)"\s*,\s*"([^"]*)")\s*\)/g;
     let actionMatch;
+    const pendingActions = [];
     while ((actionMatch = actionRegex.exec(topLevelCode)) !== null) {
       const [, hireWorker, dismWorker, dismPassword, runOldDesk, runOldArg, runNewDesk, runNewWorker, runNewPassword] = actionMatch;
+      const start = actionMatch.index;
 
       if (hireWorker !== undefined) {
-        this.storage.actions.push({ type: 'hire', workerName: hireWorker });
+        pendingActions.push({ type: 'hire', workerName: hireWorker, start });
       } else if (dismWorker !== undefined) {
-        this.storage.actions.push({ type: 'dism', workerName: dismWorker, password: dismPassword });
+        pendingActions.push({ type: 'dism', workerName: dismWorker, password: dismPassword, start });
       } else if (runOldDesk !== undefined) {
         // ① run(desk名(引数)) … workerなしの従来形式
         const argValue = runOldArg.trim().replace(/^["']|["']$/g, '');
-        this.storage.actions.push({ type: 'run', deskName: runOldDesk, argValue, workerName: null, workerPassword: null });
+        pendingActions.push({ type: 'run', deskName: runOldDesk, argValue, workerName: null, workerPassword: null, start });
       } else {
         // ② run("desk名","worker名","パスワード") … worker認証つき呼び出し
-        this.storage.actions.push({ type: 'run', deskName: runNewDesk, argValue: '', workerName: runNewWorker, workerPassword: runNewPassword });
+        pendingActions.push({ type: 'run', deskName: runNewDesk, argValue: '', workerName: runNewWorker, workerPassword: runNewPassword, start });
       }
+    }
+
+    // command.log.print("文字", 変数名, 関数名(), "文字") の解析。
+    // 引数リストは buildOutput と同じ形式（カンマ区切りの 文字列/変数名/関数呼び出し/式）。
+    const printHeaderRegex = /\bcommand\.log\.print\s*\(/g;
+    let printHeaderMatch;
+    while ((printHeaderMatch = printHeaderRegex.exec(topLevelCode)) !== null) {
+      const openIndex = printHeaderMatch.index + printHeaderMatch[0].length - 1; // マッチ末尾の "("
+      const closeIndex = this.findMatchingParen(topLevelCode, openIndex);
+      if (closeIndex === -1) continue;
+      const content = topLevelCode.slice(openIndex + 1, closeIndex);
+      pendingActions.push({ type: 'print', content, start: printHeaderMatch.index });
+      printHeaderRegex.lastIndex = closeIndex + 1;
+    }
+
+    // 出現位置順に並べ替えてから、最終的なアクション列として保存する（start は不要なので取り除く）。
+    pendingActions.sort((a, b) => a.start - b.start);
+    for (const { start, ...action } of pendingActions) {
+      this.storage.actions.push(action);
     }
   }
 }
