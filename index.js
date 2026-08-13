@@ -149,9 +149,26 @@ class DeskScriptEngine {
         if (result !== null) console.log(result);
         results.push({ deskName, argValue, workerName, result });
       } else if (action.type === 'print') {
-        // command.log.print("文字", 変数名, 関数名(), "文字") はグローバル変数と関数だけを使える
-        // （desk/drawerの外側に書く構文のため、hostScope/disScopeは持たない）。
-        const text = this.evaluator.buildOutput(action.content, {}, {});
+        // command.log.print("文字", 変数名, 関数名(), desk名(引数), "文字") の中身を評価する。
+        // ① まず desk名(引数) の呼び出しを、認証不要なdeskに限って先に解決する
+        //   （worker認証が必要なdeskは、資格情報を渡す手段がないのでここでは呼べない）。
+        let content = action.content;
+        for (const deskName in this.storage.desks) {
+          const desk = this.storage.desks[deskName];
+          const deskCallRegex = new RegExp(`\\b${deskName}\\s*\\(([^()]*)\\)`, 'g');
+          content = content.replace(deskCallRegex, (_, argsRaw) => {
+            if (desk.worker) {
+              // このDSLの文字列トークンはエスケープを解釈しないため、メッセージ内で "や\は使わない。
+              return `"[DeskScript Error]: desk ${deskName} はworker認証が必要なため、command.log.printから直接は呼べません。run(...)でworker認証つきで呼び出してください。"`;
+            }
+            const argValue = argsRaw.trim().replace(/^["']|["']$/g, '');
+            const result = this.callDesk(deskName, argValue);
+            return `"${result || ''}"`;
+          });
+        }
+        // ② 残り（文字列/グローバル変数/function呼び出し）を通常どおり評価する
+        //   （desk/drawerの外側に書く構文のため、hostScope/disScopeは持たない）。
+        const text = this.evaluator.buildOutput(content, {}, {});
         console.log(text);
       }
     }
