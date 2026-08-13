@@ -3,6 +3,21 @@ class DeskScriptEvaluator {
     this.storage = storage;
   }
 
+  // 文字列リテラル内のエスケープシーケンス（\n, \t, \\, \" など）を実際の文字に変換する。
+  // 例: "1行目\n2行目" -> 本物の改行を含む文字列。
+  unescapeString(str) {
+    return str.replace(/\\(n|t|r|\\|")/g, (_, ch) => {
+      switch (ch) {
+        case 'n': return '\n';
+        case 't': return '\t';
+        case 'r': return '\r';
+        case '\\': return '\\';
+        case '"': return '"';
+        default: return ch;
+      }
+    });
+  }
+
   // 式の中に眠る計算式や変数をJavaScriptのパワーを借りて安全に評価
   evaluateExpression(expr, hostScope, disScope = {}) {
     let contextExpr = expr;
@@ -49,7 +64,7 @@ class DeskScriptEvaluator {
     let result = "";
     for (let token of tokens) {
       if (token.startsWith('"') && token.endsWith('"')) {
-        result += token.slice(1, -1);
+        result += this.unescapeString(token.slice(1, -1));
       } else if (funcScope[token] !== undefined) {
         result += funcScope[token];
       } else if (disScope[token] !== undefined) {
