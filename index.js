@@ -1,6 +1,9 @@
 const { DeskScriptStorage } = require('./src/Storage');
 const { DeskScriptParser } = require('./src/Parser');
 const { DeskScriptEvaluator } = require('./src/Evaluator');
+const { runStatements } = require('./src/blocks/StatementRunner');
+const ReactTranspiler = require('./src/blocks/ReactTranspiler');
+const fs = require('fs');
 
 class DeskScriptEngine {
   constructor() {
@@ -12,6 +15,26 @@ class DeskScriptEngine {
   init(importPath, scriptPath) {
     this.storage.loadImports(importPath);
     return this.parser.loadScriptFile(scriptPath);
+  }
+
+  // react:desk:名前(...) の定義を、実際のReactコンポーネントの.jsxソースコードに変換して
+  // ファイルへ書き出す。このエンジンはNode.js上のテキスト処理系でありReactの実行環境ではないため、
+  // 「その場で描画する」のではなく「.jsxファイルを生成する」という形でサポートする。
+  // 戻り値: 書き出したファイルパス。deskが存在しない/変換に失敗した場合は null。
+  exportReactComponent(deskName, outputDir = '.') {
+    const desk = this.storage.reactDesks[deskName];
+    if (!desk) {
+      console.log(`[DeskScript Error]: react:desk "${deskName}" がありません。`);
+      return null;
+    }
+    const source = ReactTranspiler.transpile(deskName, desk, this.storage);
+    if (!source) {
+      console.log(`[DeskScript Error]: react:desk "${deskName}" のJSX変換に失敗しました。`);
+      return null;
+    }
+    const outputPath = `${outputDir}/${deskName}.jsx`;
+    fs.writeFileSync(outputPath, source, 'utf-8');
+    return outputPath;
   }
 
   // desk名と引数を渡して1つのdeskを実行し、outreturnの結果を「戻り値として」返す。
@@ -64,35 +87,14 @@ class DeskScriptEngine {
       }
 
       if (desk.outreturnTarget && drawer.inreturns[desk.outreturnTarget]) {
-        const rawContent = drawer.inreturns[desk.outreturnTarget];
-
-        // forループ構文の簡易処理
-        if (rawContent.includes('for(')) {
-          const forRegex = /for\s*\(dis\.var\s*:\s*(\w+)\s+in\s+([\+\-\d]+)\)\s*:\s*(\d+)\s*\{([\s\S]*?)\}\s*end\s*\{([\s\S]*?)\}/;
-          const forMatch = rawContent.match(forRegex);
-
-          if (forMatch) {
-            const varName = forMatch[1];
-            const stepExpr = forMatch[2];
-            const maxLoops = parseInt(forMatch[3]);
-            const forBody = forMatch[4].trim();
-            const endBody = forMatch[5].trim();
-
-            let step = stepExpr.startsWith('--') ? -1 : 1;
-            let currentVal = 1;
-
-            let loopOutput = "";
-            for (let l = 0; l < maxLoops; l++) {
-              const disScope = {};
-              disScope[varName] = currentVal;
-              loopOutput += this.evaluator.buildOutput(forBody, hostScope, disScope);
-              currentVal += step;
-            }
-            outputText = loopOutput + this.evaluator.buildOutput(endBody, hostScope);
-          }
-        } else {
-          outputText = this.evaluator.buildOutput(rawContent, hostScope);
-        }
+        const inreturn = drawer.inreturns[desk.outreturnTarget];
+        // if/switch/while/try/forever/for を含む「文の並び」を、順番どおりに実行する。
+        outputText = runStatements(inreturn.ast, {
+          hostScope,
+          disScope: {},
+          evaluator: this.evaluator,
+          strict: false,
+        });
       }
     }
     return outputText;
@@ -181,6 +183,12 @@ class DeskScriptEngine {
 const engine = new DeskScriptEngine();
 if (engine.init('./import.ds.txt', './main.ds')) {
   engine.runAll();
+
+  // react:desk: で定義されたUIがあれば、.jsxファイルとして書き出す
+  for (const deskName in engine.storage.reactDesks) {
+    const outputPath = engine.exportReactComponent(deskName, '.');
+    if (outputPath) console.log(`[DeskScript] React component exported -> ${outputPath}`);
+  }
 }
 
 module.exports = { DeskScriptEngine };
