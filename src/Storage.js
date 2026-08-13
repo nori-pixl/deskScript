@@ -12,6 +12,8 @@ class DeskScriptStorage {
     this.actions = [];
     // worker（deskを扱う働き者）の管理。名前 -> { password, hired }
     this.workers = {};
+    // react:desk: で定義されたdesk（通常のdesksとは別に保持する）
+    this.reactDesks = {};
   }
 
   // import.ds.txt からJSライブラリをロード
