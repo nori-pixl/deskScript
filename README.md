@@ -179,6 +179,60 @@ react:desk:taxCalculatorDesk(string priceText){
 }
 ```
 
+### 11. デスクの呼び出し（run）
+定義した`desk`は、`run(...)`という構文で実際に実行できます。`.ds`ファイルの中に何個でも並べて書くことができ、**書かれた順番どおり**に実行されます。書き方は2種類あります。
+
+```text
+// ① 通常の呼び出し（担当worker指定なしのdeskに使う）
+run(myCustomDesk("入力値"))
+
+// ② worker認証つき呼び出し（担当workerが指定されているdeskに使う。12章参照）
+run("myCustomDesk", "worker名", "パスワード")
+```
+
+### 12. Worker機能（deskを扱う働き者）
+`desk`に「担当者（worker）」を割り当て、認証された働き者だけがそのデスクを操作できるようにする機能です。
+
+```text
+// workerを登録（名前とパスワード）
+set:worker("tanaka", "pass1234")
+
+// workerを雇用する（hireされるまでは、そのworkerが担当するdeskをrunできない）
+hire("tanaka")
+
+// 直前に @worker(...) を書くと、そのdeskの担当者になる
+@worker("tanaka", "pass1234")
+desk:secretDesk(string inputData){
+   ...
+}
+
+// 担当workerの名前とパスワードを渡して呼び出す
+run("secretDesk", "tanaka", "pass1234")
+
+// workerを解雇する（本人のパスワードと一致しないと解雇できない）
+// 解雇するとdeskを扱う人がいなくなるため、以降そのworkerではrunできなくなる。
+// 再度 hire("tanaka") すれば、また雇用状態に戻せる。
+dism("tanaka", "pass1234")
+```
+
+`hire` / `dism` / `run` は、`.ds`ファイル内に書かれた順番どおりに実行されます。そのため、`dism`より前の`run`は成功し、`dism`より後の`run`は失敗する、という時系列の挙動が正しく反映されます。
+
+### 13. ログ出力（command.log.print）
+`desk`を作らずその場で値を組み立てて出力できる、汎用的なログ出力コマンドです。文字列・グローバル変数・`function`の戻り値・`desk`の実行結果を、好きな数・好きな順番で自由に組み合わせられます。
+
+```text
+command.log.print("文字列", 変数名, 関数名(), desk名(引数), "文字列")
+
+// 例
+command.log.print("[起動] システム名: ", systemName)
+command.log.print("レポート -> ", buildReport("起動チェック", 200, "正常"))
+command.log.print("desk実行結果 -> ", myCustomDesk("test"))
+```
+
+- 変数は`set:var`で定義したグローバル変数を、`global.`を付けない裸の名前で指定します。
+- `desk`を直接呼べるのは、担当worker（`@worker`）が指定されていないデスクだけです。worker認証が必要なデスクを呼ぼうとすると、エラーメッセージが表示されます。
+- `hire` / `dism` / `run`と同じく、書かれた順番で実行されるため、`run`の間に挟んでデバッグ出力用に使うこともできます。
+
 ## 実行エンジンの組み込み方法
 
 パッケージ化されたエンジン（`DeskScriptEngine`）をメインプログラムから呼び出す方法です。CommonJS（`require`）でそのまま読み込めます。
@@ -190,9 +244,13 @@ const engine = new DeskScriptEngine();
 
 // 初期化（外部ライブラリ設定、起点スクリプトのロードと自動ファイル分割合流）
 if (engine.init('./import.ds.txt', './main.ds')) {
-  // shell.log構文を文字列のまま投入してコマンドを実行
-  engine.run('shell.log(load.desk:ultimateDesk("CriticalError"))');
+  // .ds ファイル内に書かれた hire/dism/run/command.log.print を、書かれた順番どおりに実行する
+  engine.runAll();
 }
+
+// desk を1つだけ、JS側から直接呼び出して結果を受け取ることもできる
+const result = engine.callDesk('myCustomDesk', '入力値');
+console.log(result);
 ```
 
 ### 実行方法
