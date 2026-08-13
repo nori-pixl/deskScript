@@ -19,8 +19,12 @@ class DeskScriptEvaluator {
   }
 
   // 式の中に眠る計算式や変数をJavaScriptのパワーを借りて安全に評価
-  evaluateExpression(expr, hostScope, disScope = {}) {
-    let contextExpr = expr;
+  // strict=true の間（tryブロックの中）は、評価エラーを握りつぶさずに投げる
+  // （DeskScript側のcatchで受け取れるようにするため）。それ以外は従来どおり、
+  // 失敗したら元の式の文字列をそのまま返す（安全側のフォールバック）。
+  evaluateExpression(expr, hostScope, disScope = {}, strict = false) {
+    // "global.変数名" という書き方は、裸の変数名の別名として扱う（先に取り除いておく）。
+    let contextExpr = expr.replace(/\bglobal\.(\w+)/g, '$1');
     const allVars = { ...this.storage.globalStorage, ...hostScope, ...disScope };
 
     for (let key in allVars) {
@@ -31,6 +35,9 @@ class DeskScriptEvaluator {
     const moduleKeys = Object.keys(this.storage.importedModules);
     const moduleValues = Object.values(this.storage.importedModules);
 
+    if (strict) {
+      return new Function(...moduleKeys, `return (${contextExpr});`)(...moduleValues);
+    }
     try {
       return new Function(...moduleKeys, `return (${contextExpr});`)(...moduleValues);
     } catch {
@@ -51,7 +58,8 @@ class DeskScriptEvaluator {
   }
 
   // 出力用文字列の組み立て
-  buildOutput(content, hostScope, disScope = {}, funcScope = {}) {
+  // strict=true の間はevaluateExpressionのエラーも握りつぶさずに投げる（try用）。
+  buildOutput(content, hostScope, disScope = {}, funcScope = {}, strict = false) {
     let replacedContent = content;
     for (let fName in this.storage.functions) {
       const funcCallRegex = new RegExp(`${fName}\\s*\\(([^)]*)\\)`, 'g');
@@ -76,7 +84,7 @@ class DeskScriptEvaluator {
       } else if (token === '\\n' || token === '"\\n"') {
         result += '\n';
       } else {
-        result += this.evaluateExpression(token, hostScope, disScope);
+        result += this.evaluateExpression(token, hostScope, disScope, strict);
       }
     }
     return result;
