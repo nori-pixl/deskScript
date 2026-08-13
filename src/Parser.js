@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { parseStatements } = require('./blocks/StatementParser');
 
 class DeskScriptParser {
   constructor(storage) {
@@ -112,9 +113,10 @@ class DeskScriptParser {
     }
 
     // deskの解析（直前に @worker("名前","パスワード") が書かれていれば担当workerとして紐付ける）
+    // (?<!react:) で react:desk: の一部を誤って通常のdeskとして拾わないようにする。
     const deskBlocks = this.extractBlocks(
       cleanCode,
-      /(?:@worker\s*\(\s*"([^"]*)"\s*,\s*"([^"]*)"\s*\)\s*)?desk:(\w+)\s*\(([^)]*)\)\s*\{/g
+      /(?:@worker\s*\(\s*"([^"]*)"\s*,\s*"([^"]*)"\s*\)\s*)?(?<!react:)desk:(\w+)\s*\(([^)]*)\)\s*\{/g
     );
     for (const { groups, body: deskBody } of deskBlocks) {
       const [workerName, workerPassword, deskName, argsStr] = groups;
@@ -145,7 +147,17 @@ class DeskScriptParser {
         const inreturns = {};
         for (const { groups: retGroups, body: retContent } of inreturnBlocks) {
           const [retName] = retGroups;
-          inreturns[retName] = retContent.trim();
+          const trimmed = retContent.trim();
+          // 生テキスト（command.log.printのdesk直接呼び出しなどでは不要だが互換のため保持）と、
+          // if/switch/while/try/forever/forを実行できるように解析済みの「文の並び」を両方持つ。
+          let ast;
+          try {
+            ast = parseStatements(trimmed);
+          } catch {
+            // 解析に失敗しても落ちないよう、フォールバックとして生テキストをそのまま1つの文として扱う。
+            ast = [{ type: 'text', content: trimmed }];
+          }
+          inreturns[retName] = { raw: trimmed, ast };
         }
 
         drawers[drawerName] = { hostVariables, inreturns };
@@ -160,11 +172,58 @@ class DeskScriptParser {
       this.storage.desks[deskName] = { argName, drawers, outreturnTarget, worker };
     }
 
+    // react:desk: の解析（構造は通常のdeskと同じだが、storage.reactDesksに別枠で保存する）。
+    const reactDeskBlocks = this.extractBlocks(
+      cleanCode,
+      /react:desk:(\w+)\s*\(([^)]*)\)\s*\{/g
+    );
+    for (const { groups, body: deskBody } of reactDeskBlocks) {
+      const [deskName, argsStr] = groups;
+      const args = argsStr.split(/\s+/).filter(Boolean);
+      const argName = args.length > 1 ? args[1] : (args[0] || null);
+
+      const drawerBlocks = this.extractBlocks(deskBody, /drawer:(\w+)\s*\(([^)]*)\)\s*\{/g);
+      const drawers = {};
+
+      for (const { groups: drawerGroups, body: drawerBody } of drawerBlocks) {
+        const [drawerName] = drawerGroups;
+        const varLines = drawerBody.split("\n");
+        const hostVariables = {};
+
+        for (let line of varLines) {
+          line = line.trim();
+          if (line.startsWith("host.var.")) {
+            const vMatch = line.match(/host\.var\.\w+:(\w+)\s*\(([^)]+)\)/);
+            if (vMatch) {
+              const [___, varName, params] = vMatch;
+              const paramArray = params.split(",").map(p => p.trim());
+              hostVariables[varName] = { source: paramArray.length > 1 ? paramArray[1] : paramArray[0] };
+            }
+          }
+        }
+
+        const inreturnBlocks = this.extractBlocks(drawerBody, /inreturn:(\w+)\s*\{/g);
+        const inreturns = {};
+        for (const { groups: retGroups, body: retContent } of inreturnBlocks) {
+          const [retName] = retGroups;
+          // react:desk: は「文の並び」ではなく、生のJSX風テキストをそのままReactTranspilerへ渡す。
+          inreturns[retName] = { raw: retContent.trim() };
+        }
+
+        drawers[drawerName] = { hostVariables, inreturns };
+      }
+
+      const outreturnBlocks = this.extractBlocks(deskBody, /outreturn\s*\{/g);
+      const outreturnTarget = outreturnBlocks.length > 0 ? outreturnBlocks[0].body.trim() : null;
+
+      this.storage.reactDesks[deskName] = { argName, drawers, outreturnTarget };
+    }
+
     // run(desk名(引数)) / run("desk名","worker名","パスワード") の解析。
     // desk/function の本体の"外側"（トップレベル）に書かれたものだけを拾いたいので、
     // 本体部分は同じ長さの空白に置き換えてから run(...) を探す。
     let topLevelCode = cleanCode;
-    const bodySpans = [...funcBlocks, ...deskBlocks].sort((a, b) => b.start - a.start);
+    const bodySpans = [...funcBlocks, ...deskBlocks, ...reactDeskBlocks].sort((a, b) => b.start - a.start);
     for (const span of bodySpans) {
       topLevelCode =
         topLevelCode.slice(0, span.start) +
