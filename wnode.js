@@ -18,20 +18,20 @@
  * が index.js の末尾でそのまま走ります（console.logの出力はブラウザの開発者
  * コンソールに出ます）。
  *
- * .ds 側から document / window を触れるようにする方法（HTML.document.〜 も可）:
- *   import.ds.txt に以下の行を追加するだけです（crypto などと全く同じ書き方）。
+ * .ds 側からJavaScriptのdocument（DOM）を触れるようにする方法:
+ *   本家JSでは document.getElementById(...) と書きますが、deskScript側では
+ *   構文を変えて HTML.document.〜 という書き方に統一しています（裸の document
+ *   という名前は公開しません）。import.ds.txt に以下の1行を追加するだけです
+ *   （crypto などと全く同じ書き方）。
  *
- *     document
- *     window
  *     HTML
  *
  *   すると .ds ファイル内から、これまで crypto.createHash(...) と書いていたのと
- *   同じ要領で、document.getElementById(...) のような "document.系すべて" が
- *   そのまま呼び出せます。HTML.document.foo() / HTML.window.foo() という書き方も
- *   同時に使えます（HTML = { document, window } のエイリアス）。
+ *   同じ要領で、HTML.document.getElementById(...) のように document.系メソッドが
+ *   そのまま（全メソッド）呼び出せます。
  *
  *   例:
- *     "更新結果: ", document.getElementById("app").tagName, "\n"
+ *     "更新結果: ", HTML.document.getElementById("app").tagName, "\n"
  *     HTML.document.querySelector("#app").innerText = "書き換えました"
  *
  *   ※ deskScriptの式評価は「トップレベルのカンマ」で引数を区切る簡易パーサーなので、
@@ -165,11 +165,10 @@
       if (id === "path") return makePathShim();
       if (id === "process") return { env: {} };
 
-      // ブラウザ標準オブジェクトをライブラリとして注入。
-      // import.ds.txt に document / window / HTML と書くと、crypto などと
-      // 全く同じドット構文で document.系メソッドがすべて呼べるようになる。
-      if (id === "document") return window.document;
-      if (id === "window") return window;
+      // JavaScript標準のdocument（DOM）を、deskScript側では裸の "document" ではなく
+      // "HTML" という名前空間経由（HTML.document.〜）で公開する。
+      // import.ds.txt に HTML と書くと、crypto などと全く同じドット構文で
+      // document.系メソッドがすべて（HTML.document.getElementById など）呼べる。
       if (id === "HTML") return { document: window.document, window: window };
 
       // エンジン内部の相対require（例: './Storage'、'./blocks/StatementParser'）
