@@ -1,4 +1,5 @@
 # deskScript v2.2.0
+# deskScript
 
 DeskScriptは、オフィスにおける「デスク（机）」や「引き出し」の構造をメタファーとして取り入れた、堅牢で安全な制御フロー・プログラミング言語フレームワークです。
 JavaScriptのエコシステムとシームレスに融合し、独自のスコープ管理と「使い捨て変数（Discard Variable）」の仕組みによって、メモリの安全性とバグのないクリーンな業務ロジックの構築を言語レベルで強制します。
@@ -21,9 +22,20 @@ JavaScriptのエコシステムとシームレスに融合し、独自のスコ�
 ```text
 my-deskscript-engine/
 ├── src/
-│   ├── Storage.js          # グローバル・ホスト変数のメモリ管理デスク
+│   ├── Storage.js          # グローバル・ホスト変数・worker・実行順アクションのメモリ管理デスク
 │   ├── Parser.js           # .dsファイルを解体・再帰的に合流させる解析機
-│   └── Evaluator.js        # 式の評価、四則演算、ライブラリ関数の実行エンジン
+│   ├── Evaluator.js        # 式の評価、四則演算、ライブラリ関数の実行エンジン
+│   └── blocks/              # 制御構文（if/switch/while/try/forever/for）を1つずつ担当するファイル群
+│       ├── BraceUtils.js         # 括弧の対応を数える共通ユーティリティ
+│       ├── StatementParser.js    # 生テキストを「文の並び」に解析する司令塔
+│       ├── StatementRunner.js    # 「文の並び」を順番に実行する司令塔
+│       ├── IfBlock.js            # if / elif / else
+│       ├── SwitchBlock.js        # switch / case / default
+│       ├── WhileBlock.js         # while（安全のため最大反復回数の上限つき）
+│       ├── TryBlock.js           # try / catch / end
+│       ├── ForeverBlock.js       # forever（安全のため1回だけ実行）
+│       ├── ForBlock.js           # for / end
+│       └── ReactTranspiler.js    # react:desk: を .jsx ソースコードに変換
 ├── index.js                # すべてのコンポーネントを結集するメインエントリ
 └── package.json            # 依存関係定義および起動スクリプト
 ```
@@ -108,6 +120,8 @@ default{
 ### 7. 安全なループ（for / end / while / forever）
 - forループ: `dis.var`（使い捨て変数）を指定し、増減式（`++値`/`--値`）に沿って指定回数繰り返します。
 - endブロック: ループ終了後に必ず実行され、このブロックへ入った時点で使い捨て変数はメモリ上から完全に抹消されます。
+- whileループ: 条件が真である間、本体を繰り返します。**安全のため、最大5回で強制的に打ち切られます**（`1 < 2`のように恒久的に真となる条件を書いても無限ループしません）。
+- foreverブロック: 名前のとおり「永久に動き続ける監視プロセス」を表しますが、このエンジンは同期処理で必ず終了する前提のため、**条件が真であれば本体を1回だけ実行**する安全な近似として動作します（無限ループはしません）。
 
 ```text
 for(dis.var:step in ++1):3 {
@@ -127,7 +141,7 @@ forever(true){
 ```
 
 ### 8. 例外処理（try - catch - end）
-エラーが発生した際、`dis.var`として割り当てられたエラー変数へ安全にメッセージを格納し、捕獲します。終了時は`end`ブロックの着地を保証します。
+エラーが発生した際、`dis.var`として割り当てられたエラー変数へ安全にメッセージを格納し、捕獲します。終了時は`end`ブロックの着地を保証します。`try`の中身は「厳密モード」で評価されるため、未定義の関数や変数を参照するなど本物のエラーが起きると、`catch`が正しく発動します（`try`の外の通常の式評価はエラーを握りつぶして元の文字列を返す、より安全側の挙動のままです）。
 
 ```text
 try {
@@ -158,7 +172,11 @@ path
 ```
 
 ### 10. React UI統合（react:desk:）
-DeskScriptの構造をそのままReactコンポーネントへトランスパイルします。`input`などのUI要素に値を打ち込むと、連動した`host`変数が書き換わり、`drawer`内のUIがブラウザの仮想DOMへ自動的に再描画（レンダリング）されます。
+`desk:`の代わりに`react:desk:`を使うと、DeskScriptの構造を実際に動くReactコンポーネントの`.jsx`ファイルへ変換します。このエンジン自体はNode.js上のテキスト処理系でブラウザではないため、その場で描画するのではなく「`.jsx`ファイルを生成する」という形でReact連携をサポートします。生成された`.jsx`は、実際のReactプロジェクトに配置して使います。
+
+- `host.var`は自動的にReactの`useState`に変換されます。
+- `"<input ... value='"` の直後にその`host.var`が続き、`"' ... />"` で閉じられている、という決まった書き方をした場合に限り、自動的に `value={変数}` と `onChange={e => set変数(e.target.value)}` を持つ「制御されたinput」に変換されます（それ以外の使い方は`{変数}`の単純な埋め込みになり、入力と自動連動はしません）。
+- グローバル変数（`global.変数名`）は、生成されたコンポーネント単体では参照できないため、変換の時点で実際の値がリテラルとして埋め込まれます。
 
 ```text
 react:desk:taxCalculatorDesk(string priceText){
@@ -177,6 +195,13 @@ react:desk:taxCalculatorDesk(string priceText){
    }
    outreturn{ render }
 }
+```
+
+`node index.js`を実行すると、`.ds`ファイル内で定義された`react:desk:`はすべて自動的に`.jsx`ファイルとして書き出されます。JS側から個別に書き出したい場合は次のようにします。
+
+```javascript
+const outputPath = engine.exportReactComponent('taxCalculatorDesk', './output');
+// -> ./output/taxCalculatorDesk.jsx が生成される
 ```
 
 ### 11. デスクの呼び出し（run）
