@@ -1,3 +1,4 @@
+# deskScript v0.4.2
 # deskScript
 
 deskScriptは、「オフィスの引き出し（desk / drawer）」という比喩でプログラムの流れを表現する、実験的な自作スクリプト言語（DSL）です。ファイル拡張子は `.ds`。Node.js製のインタプリタで動きます。
