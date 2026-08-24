@@ -1,0 +1,94 @@
+class DeskScriptEvaluator {
+  constructor(storage) {
+    this.storage = storage;
+  }
+
+  // 文字列リテラル内のエスケープシーケンス（\n, \t, \\, \" など）を実際の文字に変換する。
+  // 例: "1行目\n2行目" -> 本物の改行を含む文字列。
+  unescapeString(str) {
+    return str.replace(/\\(n|t|r|\\|")/g, (_, ch) => {
+      switch (ch) {
+        case 'n': return '\n';
+        case 't': return '\t';
+        case 'r': return '\r';
+        case '\\': return '\\';
+        case '"': return '"';
+        default: return ch;
+      }
+    });
+  }
+
+  // 式の中に眠る計算式や変数をJavaScriptのパワーを借りて安全に評価
+  // strict=true の間（tryブロックの中）は、評価エラーを握りつぶさずに投げる
+  // （DeskScript側のcatchで受け取れるようにするため）。それ以外は従来どおり、
+  // 失敗したら元の式の文字列をそのまま返す（安全側のフォールバック）。
+  evaluateExpression(expr, hostScope, disScope = {}, strict = false) {
+    // "global.変数名" という書き方は、裸の変数名の別名として扱う（先に取り除いておく）。
+    let contextExpr = expr.replace(/\bglobal\.(\w+)/g, '$1');
+    const allVars = { ...this.storage.globalStorage, ...hostScope, ...disScope };
+
+    for (let key in allVars) {
+      const val = typeof allVars[key] === 'string' ? `"${allVars[key]}"` : allVars[key];
+      contextExpr = contextExpr.replace(new RegExp(`\\b${key}\\b`, 'g'), val);
+    }
+
+    const moduleKeys = Object.keys(this.storage.importedModules);
+    const moduleValues = Object.values(this.storage.importedModules);
+
+    if (strict) {
+      return new Function(...moduleKeys, `return (${contextExpr});`)(...moduleValues);
+    }
+    try {
+      return new Function(...moduleKeys, `return (${contextExpr});`)(...moduleValues);
+    } catch {
+      return expr;
+    }
+  }
+
+  // functionの呼び出し処理
+  callFunction(funcName, argsStr, hostScope, disScope) {
+    const fn = this.storage.functions[funcName];
+    if (!fn) return `[Function Error: ${funcName} は未定義]`;
+    const argValues = argsStr.split(',').map(a => a.trim().replace(/^["']|["']$/g, ''));
+    const funcScope = {};
+    fn.paramNames.forEach((name, index) => {
+      funcScope[name] = argValues[index] !== undefined ? argValues[index] : '';
+    });
+    return this.buildOutput(fn.body, hostScope, disScope, funcScope);
+  }
+
+  // 出力用文字列の組み立て
+  // strict=true の間はevaluateExpressionのエラーも握りつぶさずに投げる（try用）。
+  buildOutput(content, hostScope, disScope = {}, funcScope = {}, strict = false) {
+    let replacedContent = content;
+    for (let fName in this.storage.functions) {
+      const funcCallRegex = new RegExp(`${fName}\\s*\\(([^)]*)\\)`, 'g');
+      replacedContent = replacedContent.replace(funcCallRegex, (_, args) => {
+        return `"${this.callFunction(fName, args, hostScope, disScope)}"`;
+      });
+    }
+
+    const tokens = replacedContent.split(",").map(t => t.trim());
+    let result = "";
+    for (let token of tokens) {
+      if (token.startsWith('"') && token.endsWith('"')) {
+        result += this.unescapeString(token.slice(1, -1));
+      } else if (funcScope[token] !== undefined) {
+        result += funcScope[token];
+      } else if (disScope[token] !== undefined) {
+        result += disScope[token];
+      } else if (hostScope[token] !== undefined) {
+        result += hostScope[token];
+      } else if (this.storage.globalStorage[token] !== undefined) {
+        result += this.storage.globalStorage[token];
+      } else if (token === '\\n' || token === '"\\n"') {
+        result += '\n';
+      } else {
+        result += this.evaluateExpression(token, hostScope, disScope, strict);
+      }
+    }
+    return result;
+  }
+}
+
+module.exports = { DeskScriptEvaluator };
