@@ -1,35 +1,63 @@
-const fs = require('fs');
-
-class DeskScriptStorage {
-  constructor() {
-    this.globalStorage = {};
-    this.desks = {};
-    this.functions = {};
-    this.importedModules = { process };
-    // .ds ファイル内に書かれた hire(...) / dism(...) / run(...) を、
-    // 書かれた順番どおりに実行するためのアクション列。
-    // 例: [{type:'hire',...}, {type:'run',...}, {type:'dism',...}, {type:'run',...}]
-    this.actions = [];
-    // worker（deskを扱う働き者）の管理。名前 -> { password, hired }
-    this.workers = {};
-    // react:desk: で定義されたdesk（通常のdesksとは別に保持する）
-    this.reactDesks = {};
-  }
-
-  // import.ds.txt からJSライブラリをロード
-  loadImports(importFilePath) {
-    if (!fs.existsSync(importFilePath)) return;
-    const content = fs.readFileSync(importFilePath, 'utf-8');
-    const modules = content.split(/[\n,]/).map(m => m.trim()).filter(Boolean);
-
-    for (const modName of modules) {
-      try {
-        this.importedModules[modName] = require(modName);
-      } catch {
-        console.log(`[DeskScript Error]: ライブラリ「${modName}」の読込失敗。`);
-      }
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
     }
-  }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.DeskScriptStorage = void 0;
+const fs = __importStar(require("fs"));
+class DeskScriptStorage {
+    globalStorage = {};
+    desks = {};
+    functions = {};
+    classes = {}; // set:class / class: で登録されるクラス定義
+    objectSchemas = {}; // object:名前(type=...){...} で登録されるスキーマ
+    // timing:キー{処理} で登録されるイベントフック本体（キー例: "desk:x.start", "var.hp.change", "var:token.delete", "for.start"）
+    timingHooks = {};
+    importedModules = { process };
+    // import.ds.txt からJSライブラリをロード
+    loadImports(importFilePath) {
+        if (!fs.existsSync(importFilePath))
+            return;
+        const content = fs.readFileSync(importFilePath, 'utf-8');
+        const modules = content.split(/[\n,]/).map(m => m.trim()).filter(Boolean);
+        for (const modName of modules) {
+            try {
+                this.importedModules[modName] = require(modName);
+            }
+            catch {
+                console.log(`[DeskScript Error]: ライブラリ「${modName}」の読込失敗。`);
+            }
+        }
+    }
 }
-
-module.exports = { DeskScriptStorage };
+exports.DeskScriptStorage = DeskScriptStorage;
