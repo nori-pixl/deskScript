@@ -106,6 +106,8 @@
     "src/blocks/MailboxBlock.js",
     "src/blocks/AuditTrailBlock.js",
     "src/blocks/ClassBlock.js",
+    "src/blocks/ControlBlock.js",
+    "src/blocks/ObjectBlock.js",
   ];
 
   const moduleSource = Object.create(null); // 正規化パス -> ソーステキスト
