@@ -114,7 +114,7 @@ class DeskScriptExtensions {
         result = ClassBlock.processNewInstance(result, hostScope, disScope, this.ctx);
         result = ClassBlock.processInstanceFieldAccess(result, this.ctx);
         // ★新規: object:X.new(...) と X.フィールド の参照解決
-        result = ObjectBlock.processObjectNew(result, hostScope, disScope, this.ctx);
+        result = ObjectBlock.processObjectStatements(result, hostScope, disScope, this.ctx);
         result = ObjectBlock.processObjectFieldAccess(result, disScope, this.ctx);
         // shred:var は他の構文が hostScope/disScope の値を参照し終えた後、最後に処理する
         result = VarLifecycle.processShredVar(result, hostScope, disScope);
