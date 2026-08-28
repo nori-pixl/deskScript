@@ -339,6 +339,24 @@ class DeskScriptParser {
                 fieldSchema: existingDeskEntry?.fieldSchema,
             };
         }
+        // set:object(desk名, [drawer1, drawer2,,,]) —
+        // @object(name=desk名) を列挙した各drawerへ1つずつ手動で書く代わりに、
+        // desk名と同名のobjectスキーマへの紐付けを一括で行う。
+        // desk本体の解析が全部終わったこの時点で処理する（対象drawerが先に登録済みである必要があるため）。
+        const setObjectRegex = /set:object\(\s*(\w+)\s*,\s*\[([^\]]*)\]\s*\)/g;
+        let setObjectMatch;
+        while ((setObjectMatch = setObjectRegex.exec(cleanCode)) !== null) {
+            const [, deskName, drawerListRaw] = setObjectMatch;
+            const drawerNames = drawerListRaw.split(',').map(d => d.trim()).filter(d => d !== '');
+            const targetDesk = this.storage.desks[deskName];
+            if (!targetDesk)
+                continue;
+            for (const dName of drawerNames) {
+                if (targetDesk.drawers[dName]) {
+                    targetDesk.drawers[dName].objectBinding = deskName;
+                }
+            }
+        }
     }
 }
 exports.DeskScriptParser = DeskScriptParser;
