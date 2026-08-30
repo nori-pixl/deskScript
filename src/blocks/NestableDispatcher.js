@@ -1,9 +1,9 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.processNestableBlocks = processNestableBlocks;
-const MAX_WHILE_ITERATIONS = 1000; // ★変更: 以前は5回で強制打ち切りだったが、
-// @setin(name=名前, type=ctrl) を付ければ setin:名前.stop() で明示的に止められるようにしたため、
-// 自動打ち切りの上限自体は「暴走防止の安全弁」として引き上げた（本当の無限は同期JSでは危険なため設けない）
+// ★修正3: while/foreverの安全装置を「固定回数(旧: 1000回、さらに前は5回)」から
+// 「desk実行全体の経過時間(ctx.executionDeadline)」ベースへ変更した。
+// 詳細は processWhileAt / processForeverAt を参照。
 // --- if(条件):true{...} elif(条件):true{...} else{...} ---
 function processIfAt(out, m, hostScope, disScope, ctx) {
     const branches = [];
@@ -100,7 +100,8 @@ function processSwitchAt(out, m, hostScope, disScope, ctx) {
     }
     return { output, spanEnd: cursor - 1 };
 }
-// --- while(条件):true{...} （安全のため最大反復回数あり。@setinで名前を付ければsetin:名前.stop()で明示制御できる） ---
+// --- while(条件):true{...} （★修正3: 固定回数ではなく経過時間で打ち切る。
+//     @setinで名前を付ければsetin:名前.stop()で明示制御できる） ---
 function processWhileAt(out, m, hostScope, disScope, ctx) {
     const controlName = m[1] || null;
     const condition = m[2];
@@ -116,17 +117,24 @@ function processWhileAt(out, m, hostScope, disScope, ctx) {
     }
     let output = '';
     let count = 0;
-    while (count < MAX_WHILE_ITERATIONS) {
+    let timedOut = false;
+    while (true) {
         if (control && control.stopped)
             break;
+        // ★修正3: 「1000回」という固定回数ではなく、desk実行全体の締切(executionDeadline)
+        // を超えたかどうかで判定する。回数ではなく時間で暴走を止める設計に変更。
+        if (Date.now() > ctx.executionDeadline) {
+            timedOut = true;
+            break;
+        }
         const condResult = ctx.evaluator.evaluateExpression(condition, hostScope, disScope);
         if (!(condResult === true || condResult === 'true'))
             break;
         output += ctx.runBody(body, hostScope, disScope);
         count++;
     }
-    if (count >= MAX_WHILE_ITERATIONS) {
-        output += `\n[DeskScript Warning]: while条件が${MAX_WHILE_ITERATIONS}回を超えて真のままだったため、安全のため打ち切りました。\n`;
+    if (timedOut) {
+        output += `\n[DeskScript Warning]: while条件が実行時間の上限(${ctx.executionTimeoutMs}ms)に達したため、安全のため打ち切りました。(${count}回実行)\n`;
     }
     return { output, spanEnd: closeIdx };
 }
@@ -174,8 +182,8 @@ function processTryAt(out, m, hostScope, disScope, ctx) {
 //     setin:名前.stop()/setin:名前.start()/setin:名前.delete()/setin:名前.add() で外部制御できる。
 //     本当の無限ループは同期JSではハングするため、安全上限つきで実行する。
 //     timing:forever.start{...} を先に発火してから本体ループに入るので、
-//     そのフック内で setin:名前.stop() を呼べば、本体を一度も実行せずに止められる） ---
-const FOREVER_SAFETY_CAP = 1000;
+//     そのフック内で setin:名前.stop() を呼べば、本体を一度も実行せずに止められる。
+//     ★修正3: 固定回数(1000回)ではなく、desk実行全体の経過時間で打ち切る） ---
 function processForeverAt(out, m, hostScope, disScope, ctx) {
     const controlName = m[1] || null;
     const openIdx = m.index + m[0].length - 1;
@@ -192,14 +200,19 @@ function processForeverAt(out, m, hostScope, disScope, ctx) {
     // 下のループは条件チェックで即座に抜けるので、本体は一度も実行されない。
     let output = ctx.fireTimingHooks('forever.start', hostScope, disScope);
     let count = 0;
-    while (count < FOREVER_SAFETY_CAP) {
+    let timedOut = false;
+    while (true) {
         if (control && control.stopped)
             break;
+        if (Date.now() > ctx.executionDeadline) {
+            timedOut = true;
+            break;
+        }
         output += ctx.runBody(body, hostScope, disScope);
         count++;
     }
-    if (count >= FOREVER_SAFETY_CAP && !(control && control.stopped)) {
-        output += `\n[DeskScript Warning]: foreverが安全上限(${FOREVER_SAFETY_CAP}回)に達したため打ち切りました。無限ループはハングの原因になるため意図的な制限です。\n`;
+    if (timedOut) {
+        output += `\n[DeskScript Warning]: foreverが実行時間の上限(${ctx.executionTimeoutMs}ms)に達したため打ち切りました。(${count}回実行) 無限ループはハングの原因になるため意図的な制限です。\n`;
     }
     output += ctx.fireTimingHooks('forever.end', hostScope, disScope);
     return { output, spanEnd: closeIdx };
@@ -393,4 +406,4 @@ function processNestableBlocks(content, hostScope, disScope, ctx) {
     }
     // 万一 \u0000 のダミー埋めが残っていたら取り除く
     return out.replace(/\u0000/g, '');
-}
+        }
