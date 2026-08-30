@@ -54,23 +54,19 @@ const NestableDispatcher_1 = require("./blocks/NestableDispatcher");
  * 今後 @タグ を追加するときもこのペアリングに揃える。
  *
  * 実際の各構文の処理ロジックは src/blocks/ 配下のファイルに分割されている。
- *   src/blocks/BlockContext.ts        … 全ブロック共有の状態＆ヘルパー
+ *   src/blocks/BlockContext.ts        … 全ブロック共有の状態＆ヘルパー。
+ *                                        ★修正3: reset() / executionDeadline を追加
  *   src/blocks/NestableDispatcher.ts  … if/switch/while/try/forever/for/lock:drawer/
- *                                        intern:desk/stamp/shift を「テキスト中で最も左
- *                                        （＝外側）にあるものから」処理する統一ディスパッチャ。
- *                                        while/forever は直前に @setin(name=名前, type=ctrl) を
- *                                        置くと名前付き制御ハンドルが使える。
+ *                                        intern:desk/stamp/shift の統一ディスパッチャ。
+ *                                        while/foreverは経過時間ベースで打ち切る（★修正3）
  *   src/blocks/DrawerLockBlock.ts     … unlock:drawer / @drawer タグ / 名前.lock・unlock文
- *                                        （lock:drawer(){...} 本体はNestableDispatcher側）
  *   src/blocks/VarLifecycleBlock.ts   … shred:var / var:名前.delete()
- *   src/blocks/ControlBlock.ts        … @setin(name=X, type=ctrl)を操作する
- *                                        setin:X.stop() / .start() / .delete(type=comp|leav) / .add()
- *   src/blocks/ObjectBlock.ts         … ★新規: @object(name=X)スキーマのレコード操作
- *                                        object:X.new(フィールド:型=値,,,) / X.フィールド名
+ *   src/blocks/ControlBlock.ts        … setin:X.stop() 等
+ *   src/blocks/ObjectBlock.ts         … object:X.new(...) / X.フィールド名
  *   src/blocks/MeetingJoinBlock.ts    … meeting:join(...)
  *   src/blocks/MailboxBlock.ts        … outbox:send / inbox:receive
  *   src/blocks/AuditTrailBlock.ts     … audit:trail(...)
- *   src/blocks/ClassBlock.ts          … class機能（set:class / class: / new: / インスタンス.フィールド）
+ *   src/blocks/ClassBlock.ts          … class機能
  *
  * このファイル自身は「applyExtensions() でどの順番に呼ぶか」と、
  * デスク実行の共通ロジック runDesk() だけを担当する。
@@ -79,33 +75,25 @@ class DeskScriptExtensions {
     ctx;
     constructor(storage, evaluator) {
         this.ctx = new BlockContext_1.BlockContext(storage, evaluator);
-        // meeting:join から desk を実行できるようにコールバックを注入する（循環import回避）
         this.ctx.runDesk = (deskName, argValue) => this.runDesk(deskName, argValue);
-        // 各ブロックが自分のbodyを実行する際にネストした構文も処理できるよう、
-        // applyExtensions 自体もコールバックとして注入する（循環import回避）
         this.ctx.applyExtensions = (content, hostScope, disScope) => this.applyExtensions(content, hostScope, disScope);
     }
     getAuditLog() {
         return this.ctx.auditLog;
     }
-    /**
-     * 各拡張構文を処理し、それぞれの実行結果を文字列リテラルへ
-     * 差し替えた content を返す。desk 実行前 (rawContent に対して) に呼ぶ。
-     */
+    // ★修正3(メモリ管理): 独立したスクリプト実行の間にこれを呼ぶと、
+    // ロック状態・監査ログ・class/objectインスタンス・@setinハンドル等の
+    // プロセス内に溜まり続ける状態を一括で破棄する。常駐サーバーでの使用を想定。
+    reset() {
+        this.ctx.reset();
+    }
     applyExtensions(content, hostScope, disScope = {}) {
         let result = content;
         result = DrawerLock.processDrawerTag(result);
         result = DrawerLock.processUnlockDrawer(result, this.ctx);
         result = DrawerLock.processLockUnlockStatements(result, this.ctx);
         result = VarLifecycle.processVarDelete(result, hostScope, disScope, this.ctx);
-        // @setin(name=X, type=ctrl)で名前を付けたforever/whileの操作系（setin:X.stop()等）。
-        // 主に timing:forever.start{ setin:X.stop() } のようなフック本体の中で使われる。
-        // 4種類の操作は左→右の書かれた順で処理する（ControlBlock.ts内のコメント参照）。
         result = ControlBlock.processControlStatements(result, this.ctx);
-        // ★根本バグ修正: if/switch/while/try/forever/for/lock:drawer/intern:desk/stamp/shift は
-        // すべてここで「テキスト上で一番左（外側）にあるものから」まとめて処理する。
-        // 個別に固定順で処理すると、たとえば for の中の if が for より先に処理されてしまい、
-        // ループ変数が存在しないスコープで評価される、といったネストバグが起きるため。
         result = (0, NestableDispatcher_1.processNestableBlocks)(result, hostScope, disScope, this.ctx);
         result = MeetingJoin.processMeetingJoin(result, this.ctx);
         result = Mailbox.processOutboxSend(result, hostScope, disScope, this.ctx);
@@ -113,69 +101,71 @@ class DeskScriptExtensions {
         result = AuditTrail.processAuditTrail(result, hostScope, disScope, this.ctx);
         result = ClassBlock.processNewInstance(result, hostScope, disScope, this.ctx);
         result = ClassBlock.processInstanceFieldAccess(result, this.ctx);
-        // ★新規: object:X.new(...) と X.フィールド の参照解決
         result = ObjectBlock.processObjectStatements(result, hostScope, disScope, this.ctx);
         result = ObjectBlock.processObjectFieldAccess(result, disScope, this.ctx);
-        // shred:var は他の構文が hostScope/disScope の値を参照し終えた後、最後に処理する
         result = VarLifecycle.processShredVar(result, hostScope, disScope);
         return result;
     }
     // ===================================================================
     // desk 実行の共通ロジック（index.ts から移設。meeting:join からも再利用する）
+    //
+    // ★修正4(エラーの構造化): 戻り値をプレーンな文字列から
+    //   { success: boolean, output: string, error: string|null }
+    // へ変更した。呼び出し側は「成功したか」「どこまで出力があるか」
+    // 「失敗理由は何か」を明確に区別できる。
     // ===================================================================
     runDesk(deskName, argValue) {
         const desk = this.ctx.storage.desks[deskName];
-        if (!desk)
-            return `[DeskScript Error]: desk "${deskName}" がありません。`;
-        // 名前.lock(type=desk, timing=now) で即時ロックされていれば実行を拒否する
+        if (!desk) {
+            return { success: false, output: '', error: `desk "${deskName}" がありません。` };
+        }
         if (this.ctx.lockedDesks.has(deskName)) {
-            return `[Desk Lock Error] デスク「${deskName}」は現在ロック中のため実行できません。`;
+            return { success: false, output: '', error: `デスク「${deskName}」は現在ロック中のため実行できません。` };
         }
-        // desk:${deskName}.start のタイミングで予約されたロック/アンロック実行 と timing:フック
-        let startLog = '';
-        startLog += this.ctx.applyScheduledActions(`desk:${deskName}.start`);
-        startLog += this.ctx.fireTimingHooks(`desk:${deskName}.start`, {}, {});
-        // set:desk(名前, 型:引数,,,) で型スキーマが宣言されていれば、最初の引数の型を軽く検証する
-        let typeWarning = '';
-        if (desk.fieldSchema && desk.fieldSchema.length > 0) {
-            const primary = desk.fieldSchema[0];
-            if (!this.ctx.matchesType(argValue, primary.type)) {
-                typeWarning = `[set:desk 型警告] 「${deskName}」の引数「${primary.name}」は型「${primary.type}」を期待していますが、値は「${argValue}」でした。\n`;
-            }
-        }
-        const deskArgs = {};
-        if (desk.argName)
-            deskArgs[desk.argName] = argValue;
-        let outputText = '';
-        let varChangeLog = '';
-        for (const dName in desk.drawers) {
-            const drawer = desk.drawers[dName];
-            const hostScope = {};
-            // object(type=host)のストレージキー解決用に、現在実行中のdrawer名を記録する
-            this.ctx.currentDrawerName = dName;
-            for (const vName in drawer.hostVariables) {
-                const src = drawer.hostVariables[vName].source;
-                const value = deskArgs[src] !== undefined ? deskArgs[src] : (this.ctx.storage.globalStorage[src] || src);
-                hostScope[vName] = value;
-                // timing:var.名前.change{...} — 前回実行時と値が変わっていれば発火する
-                const prevValue = this.ctx.lastVarValues.get(vName);
-                if (prevValue !== undefined && prevValue !== value) {
-                    varChangeLog += this.ctx.fireTimingHooks(`var.${vName}.change`, hostScope, {});
+        // ★修正3(タイムアウト化): このdesk呼び出し全体に実行時間の締切を設定する。
+        this.ctx.executionDeadline = Date.now() + this.ctx.executionTimeoutMs;
+        let accumulated = '';
+        try {
+            accumulated += this.ctx.applyScheduledActions(`desk:${deskName}.start`);
+            accumulated += this.ctx.fireTimingHooks(`desk:${deskName}.start`, {}, {});
+            if (desk.fieldSchema && desk.fieldSchema.length > 0) {
+                const primary = desk.fieldSchema[0];
+                if (!this.ctx.matchesType(argValue, primary.type)) {
+                    accumulated += `[set:desk 型警告] 「${deskName}」の引数「${primary.name}」は型「${primary.type}」を期待していますが、値は「${argValue}」でした。\n`;
                 }
-                this.ctx.lastVarValues.set(vName, value);
             }
-            if (desk.outreturnTarget && drawer.inreturns[desk.outreturnTarget]) {
-                let rawContent = drawer.inreturns[desk.outreturnTarget];
-                // 拡張構文（if/for/lockなど全部）を先に処理し、結果を文字列リテラルへ差し替える。
-                rawContent = this.applyExtensions(rawContent, hostScope, {});
-                outputText = this.ctx.evaluator.buildOutput(rawContent, hostScope);
+            const deskArgs = {};
+            if (desk.argName)
+                deskArgs[desk.argName] = argValue;
+            for (const dName in desk.drawers) {
+                const drawer = desk.drawers[dName];
+                const hostScope = {};
+                this.ctx.currentDrawerName = dName;
+                for (const vName in drawer.hostVariables) {
+                    const src = drawer.hostVariables[vName].source;
+                    const value = deskArgs[src] !== undefined ? deskArgs[src] : (this.ctx.storage.globalStorage[src] || src);
+                    hostScope[vName] = value;
+                    const prevValue = this.ctx.lastVarValues.get(vName);
+                    if (prevValue !== undefined && prevValue !== value) {
+                        accumulated += this.ctx.fireTimingHooks(`var.${vName}.change`, hostScope, {});
+                    }
+                    this.ctx.lastVarValues.set(vName, value);
+                }
+                if (desk.outreturnTarget && drawer.inreturns[desk.outreturnTarget]) {
+                    let rawContent = drawer.inreturns[desk.outreturnTarget];
+                    rawContent = this.applyExtensions(rawContent, hostScope, {});
+                    accumulated += this.ctx.evaluator.buildOutput(rawContent, hostScope);
+                }
             }
+            accumulated += this.ctx.applyScheduledActions(`desk:${deskName}.end`);
+            accumulated += this.ctx.fireTimingHooks(`desk:${deskName}.end`, {}, {});
+            return { success: true, output: accumulated, error: null };
         }
-        // desk:${deskName}.end のタイミングで予約されたロック/アンロック実行 と timing:フック
-        let endLog = '';
-        endLog += this.ctx.applyScheduledActions(`desk:${deskName}.end`);
-        endLog += this.ctx.fireTimingHooks(`desk:${deskName}.end`, {}, {});
-        return startLog + typeWarning + varChangeLog + outputText + endLog;
+        catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            const partial = (err && typeof err.partialOutput === 'string') ? err.partialOutput : '';
+            return { success: false, output: accumulated + partial, error: message };
+        }
     }
 }
 exports.DeskScriptExtensions = DeskScriptExtensions;
