@@ -43,7 +43,12 @@ class DeskScriptStorage {
     objectSchemas = {}; // object:名前(type=...){...} で登録されるスキーマ
     // timing:キー{処理} で登録されるイベントフック本体（キー例: "desk:x.start", "var.hp.change", "var:token.delete", "for.start"）
     timingHooks = {};
-    importedModules = { process };
+    // ★セキュリティ修正: 以前は `importedModules = { process }` として、
+    // import.ds.txtへの明記なしに常にNode本物のprocessオブジェクトが
+    // 式の評価スコープへ差し込まれていた。vmサンドボックス化（ホワイトリスト方式）
+    // ではこれが致命的で、process.exit(1) のような式がそのまま実行できてしまう
+    // ことを確認した。processが必要な場合はimport.ds.txtに明記させる方式へ変更する。
+    importedModules = {};
     // import.ds.txt からJSライブラリをロード
     loadImports(importFilePath) {
         if (!fs.existsSync(importFilePath))
