@@ -41,6 +41,34 @@ class BlockContext {
     // runDesk() がdrawerごとの処理に入るたびにセットする、現在実行中のdrawer名。
     // object(type=host)のストレージキー解決に使う。
     currentDrawerName = null;
+
+    // ★修正3(タイムアウト化): while/foreverの暴走対策を「固定回数」から
+    // 「経過時間」ベースへ変更するための締切時刻(ミリ秒のUNIX時間)。
+    // runDesk() の開始時に Date.now() + executionTimeoutMs でセットされる。
+    executionDeadline = Infinity;
+    executionTimeoutMs = 2000; // 1回のdesk実行に許される最大時間（既定2秒）
+
+    // ★修正3(メモリ管理): 常駐サーバー等で同じエンジンインスタンスを使い回す場合、
+    // 独立したスクリプト実行の間でこれを呼んで状態をクリアする。
+    // ロック状態・監査ログ・class/objectのインスタンス・@setinハンドル等、
+    // プロセス内に溜まり続けていた状態を一括で破棄しガベージコレクション対象にする。
+    reset() {
+        this.lockedDrawers = new Set();
+        this.lockedDesks = new Set();
+        this.internStates = new Map();
+        this.mailbox = new Map();
+        this.auditLog = [];
+        this.scheduledActions = {};
+        this.lastVarValues = new Map();
+        this.instanceCounter = new Map();
+        this.instances = new Map();
+        this.namedControls = new Map();
+        this.objectStorageGlobal = new Map();
+        this.objectStorageHost = new Map();
+        this.currentDrawerName = null;
+        this.executionDeadline = Infinity;
+    }
+
     // meeting:join からデスクを実行するためのコールバック。
     // DeskExtensions側で runDesk 実体をセットする（循環import回避のため後から注入）。
     runDesk = () => '[DeskScript Error]: runDesk が未初期化です。';
