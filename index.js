@@ -31,7 +31,18 @@ class DeskScriptEngine {
         const argValue = loadDeskMatch[2].replace(/^["']|["']$/g, '');
         // desk実行そのものは DeskScriptExtensions.runDesk に一本化
         // （meeting:join からも同じロジックを再利用するため）
-        console.log(this.extensions.runDesk(deskName, argValue));
+        // ★修正4対応: runDeskの戻り値が {success, output, error} の構造化オブジェクトに
+        // なったので、成否に応じて表示を分ける（失敗時は途中経過とエラー内容の両方を出す）。
+        const result = this.extensions.runDesk(deskName, argValue);
+        if (result.success) {
+            console.log(result.output);
+        }
+        else {
+            console.error(`[DeskScript Error] ${result.error}`);
+            if (result.output) {
+                console.log(result.output);
+            }
+        }
     }
     // 監査ログ（audit:trail）をまとめて取得したいときに使う
     getAuditLog() {
@@ -42,6 +53,5 @@ exports.DeskScriptEngine = DeskScriptEngine;
 // --- 実際の実行トリガー ---
 const engine = new DeskScriptEngine();
 if (engine.init('./import.ds.txt', './main.ds')) {
-    // 分割合流したゲーム用ロジックを動かす！
     engine.run('shell.log(load.desk:ultimateDesk("CriticalError"))');
 }
