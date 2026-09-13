@@ -1,5 +1,8 @@
 # deskScript v0.3.6　開発バージョン
 # deskScript
+# Clever Cat
+
+### 情報:開発停滞中
 
 deskScriptは、「オフィスの引き出し（desk / drawer）」という比喩でプログラムの流れを表現する、実験的な自作スクリプト言語（DSL）です。ファイル拡張子は `.ds`。Node.js製のインタプリタで動きます。
 
