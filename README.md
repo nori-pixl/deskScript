@@ -1,6 +1,5 @@
 # deskScript v0.3.6　開発バージョン
-# deskScript
-# Clever Cat
+# deskScript <br> Clever Cat
 
 ### 情報:開発停滞中
 
